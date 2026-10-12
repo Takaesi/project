@@ -1,4 +1,8 @@
 vault.bin
 vault.bin.tmp
+activity_report.json
+*.tmp
+.DS_Store
 venv/
 __pycache__/
+*.py[cod]

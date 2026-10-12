@@ -5,13 +5,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "desktop-password-manager"
 version = "0.1.0"
-description = "A small encrypted desktop password manager"
+description = "An object-oriented Flet desktop password manager"
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = ["cryptography>=41"]
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=41",
+    "flet>=1.0",
+    "flet-web>=1.0",
+]
 
 [project.scripts]
-password-manager = "password_manager.__main__:main"
+password-manager = "password_manager.__main__:run"
 
 [tool.setuptools.packages.find]
 include = ["password_manager*"]

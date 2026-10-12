@@ -1,118 +1,230 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
+import flet as ft
 
-from .passwords import generate_password
+from .entities import Entry
+from .passwords import PasswordGenerator
+from .storage import Vault
 
 
-class PasswordPrompt(tk.Toplevel):
-    def __init__(self, parent, title, prompt):
-        super().__init__(parent)
-        self.title(title)
-        self.resizable(False, False)
-        if parent.state() != "withdrawn":
-            self.transient(parent)
-        self.result = None
-
-        frame = ttk.Frame(self, padding=15)
-        frame.grid()
-        ttk.Label(frame, text=prompt).grid(row=0, column=0, sticky="w")
-
-        self.password = tk.StringVar(self)
-        entry = ttk.Entry(frame, textvariable=self.password, show="•", width=34)
-        entry.grid(row=1, column=0, pady=(8, 12))
-
-        buttons = ttk.Frame(frame)
-        buttons.grid(row=2, column=0, sticky="e")
-        ttk.Button(buttons, text="Продолжить", command=self._submit).pack(
-            side="left", padx=(0, 6)
+class LoginDialog(ft.AlertDialog):
+    def __init__(self, page, vault, on_success, on_cancel):
+        is_new_vault = not vault.exists()
+        password_input = ft.TextField(
+            label="Новый мастер-пароль" if is_new_vault else "Мастер-пароль",
+            password=True,
+            can_reveal_password=True,
+            autofocus=True,
+            on_submit=self._authenticate,
         )
-        ttk.Button(buttons, text="Отмена", command=self.destroy).pack(side="left")
-
-        self.bind("<Return>", self._submit)
-        self.bind("<Escape>", lambda event: self.destroy())
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - self.winfo_width()) // 2
-        y = (self.winfo_screenheight() - self.winfo_height()) // 2
-        self.geometry(f"+{x}+{y}")
-        self.grab_set()
-        entry.focus_set()
-        self.wait_window()
-
-    def _submit(self, event=None):
-        self.result = self.password.get()
-        self.destroy()
-
-
-class EntryDialog(tk.Toplevel):
-    def __init__(self, parent, title, entry=None):
-        super().__init__(parent)
-        self.title(title)
-        self.resizable(False, False)
-        self.transient(parent)
-        self.result = None
-        entry = entry or {"site": "", "login": "", "password": "", "note": ""}
-
-        frm = ttk.Frame(self, padding=15)
-        frm.grid()
-
-        self.site = tk.StringVar(value=entry["site"])
-        self.login = tk.StringVar(value=entry["login"])
-        self.password = tk.StringVar(value=entry["password"])
-        self.show = tk.BooleanVar(value=False)
-
-        ttk.Label(frm, text="Сайт / сервис:").grid(row=0, column=0, sticky="w", pady=4)
-        ttk.Entry(frm, textvariable=self.site, width=34).grid(
-            row=0, column=1, columnspan=2
+        repeat_input = ft.TextField(
+            label="Повторите мастер-пароль",
+            password=True,
+            can_reveal_password=True,
+            visible=is_new_vault,
+            on_submit=self._authenticate,
         )
-
-        ttk.Label(frm, text="Логин:").grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Entry(frm, textvariable=self.login, width=34).grid(
-            row=1, column=1, columnspan=2
+        error_label = ft.Text("", color="#b42318")
+        content = ft.Column(
+            controls=[
+                ft.Text(
+                    "Мастер-пароль нельзя восстановить."
+                    if is_new_vault
+                    else "Введите мастер-пароль для доступа к хранилищу."
+                ),
+                password_input,
+                repeat_input,
+                error_label,
+            ],
+            tight=True,
+            width=380,
+            spacing=12,
         )
-
-        ttk.Label(frm, text="Пароль:").grid(row=2, column=0, sticky="w", pady=4)
-        self.pw_entry = ttk.Entry(frm, textvariable=self.password, width=34, show="•")
-        self.pw_entry.grid(row=2, column=1, columnspan=2)
-
-        ttk.Checkbutton(
-            frm, text="Показать", variable=self.show, command=self._toggle
-        ).grid(row=3, column=1, sticky="w")
-        ttk.Button(frm, text="Сгенерировать", command=self._generate).grid(
-            row=3, column=2, sticky="e"
+        super().__init__(
+            modal=True,
+            title=ft.Text(
+                "Создание хранилища" if is_new_vault else "Вход в хранилище"
+            ),
+            content=content,
+            actions=[
+                ft.TextButton("Отмена", on_click=self._cancel),
+                ft.FilledButton("Продолжить", on_click=self._authenticate),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+            on_dismiss=self._dismiss,
         )
+        self._page = page
+        self._vault = vault
+        self._on_success = on_success
+        self._on_cancel = on_cancel
+        self.is_new_vault = is_new_vault
+        self._authenticated = False
+        self._cancelled = False
+        self.password_input = password_input
+        self.repeat_input = repeat_input
+        self.error_label = error_label
 
-        ttk.Label(frm, text="Заметка:").grid(row=4, column=0, sticky="nw", pady=4)
-        self.note = tk.Text(frm, width=34, height=4)
-        self.note.grid(row=4, column=1, columnspan=2)
-        self.note.insert("1.0", entry["note"])
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=5, column=0, columnspan=3, pady=(12, 0), sticky="e")
-        ttk.Button(btns, text="Сохранить", command=self._ok).pack(side="left", padx=4)
-        ttk.Button(btns, text="Отмена", command=self.destroy).pack(side="left")
-
-        self.bind("<Return>", lambda e: None)
-        self.bind("<Escape>", lambda e: self.destroy())
-        self.grab_set()
-        self.wait_window()
-
-    def _toggle(self):
-        self.pw_entry.config(show="" if self.show.get() else "•")
-
-    def _generate(self):
-        self.password.set(generate_password())
-        self.show.set(True)
-        self._toggle()
-
-    def _ok(self):
-        if not self.site.get().strip() or not self.password.get():
-            messagebox.showwarning("Внимание", "Укажите сервис и пароль.", parent=self)
+    def _authenticate(self, event=None):
+        password = self.password_input.value or ""
+        if self.is_new_vault:
+            if len(password) < 8:
+                self.error_label.value = "Минимальная длина мастер-пароля — 8 символов."
+                self.update()
+                return
+            if password != (self.repeat_input.value or ""):
+                self.error_label.value = "Пароли не совпадают."
+                self.update()
+                return
+            try:
+                self._vault.create(password)
+            except OSError as error:
+                self.error_label.value = f"Не удалось создать хранилище: {error}"
+                self.update()
+                return
+            self._authenticated = True
+            self._page.pop_dialog()
+            self._on_success()
             return
-        self.result = {
-            "site": self.site.get().strip(),
-            "login": self.login.get().strip(),
-            "password": self.password.get(),
-            "note": self.note.get("1.0", "end").strip(),
-        }
-        self.destroy()
+
+        try:
+            unlocked = self._vault.unlock(password)
+        except (OSError, ValueError) as error:
+            self.error_label.value = f"Ошибка хранилища: {error}"
+            self.update()
+            return
+        if unlocked:
+            self._authenticated = True
+            self._page.pop_dialog()
+            self._on_success()
+            return
+        self.password_input.value = ""
+        self.error_label.value = "Неверный мастер-пароль."
+        self.update()
+
+    def _cancel(self, event=None):
+        self._cancelled = True
+        self._page.pop_dialog()
+        self._on_cancel()
+
+    def _dismiss(self, event=None):
+        if not self._authenticated and not self._cancelled:
+            self._cancelled = True
+            self._on_cancel()
+
+
+class EntryDialog(ft.AlertDialog):
+    def __init__(self, page, on_save, entry=None):
+        source = entry if isinstance(entry, Entry) else Entry()
+        generator = PasswordGenerator()
+        site_input = ft.TextField(
+            label="Сервис",
+            value=source.site,
+            hint_text="Например, example.com",
+            autofocus=True,
+        )
+        login_input = ft.TextField(
+            label="Логин",
+            value=source.login,
+            hint_text="Имя пользователя или электронная почта",
+        )
+        password_input = ft.TextField(
+            label="Пароль",
+            value=source.password,
+            password=True,
+            can_reveal_password=True,
+        )
+        note_input = ft.TextField(
+            label="Заметка",
+            value=source.note,
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+        )
+        length_input = ft.Slider(
+            min=8,
+            max=64,
+            divisions=56,
+            value=20,
+            label="{value}",
+            on_change=self._update_length,
+        )
+        length_label = ft.Text("Длина пароля: 20")
+        digits_option = ft.Checkbox(label="Цифры", value=True)
+        symbols_option = ft.Checkbox(label="Символы", value=True)
+        error_label = ft.Text("", color="#b42318")
+        form = ft.Column(
+            controls=[
+                site_input,
+                login_input,
+                password_input,
+                ft.Row(
+                    [
+                        length_label,
+                        ft.OutlinedButton(
+                            "Сгенерировать пароль",
+                            icon=ft.Icons.AUTORENEW,
+                            on_click=self._generate_password,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                length_input,
+                ft.Row([digits_option, symbols_option]),
+                note_input,
+                error_label,
+            ],
+            tight=True,
+            width=500,
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+        )
+        super().__init__(
+            modal=True,
+            title=ft.Text("Новая запись" if entry is None else "Редактирование записи"),
+            content=form,
+            actions=[
+                ft.TextButton("Отмена", on_click=self._cancel),
+                ft.FilledButton("Сохранить", on_click=self._save),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._page = page
+        self._on_save = on_save
+        self._generator = generator
+        self.site_input = site_input
+        self.login_input = login_input
+        self.password_input = password_input
+        self.note_input = note_input
+        self.length_input = length_input
+        self.length_label = length_label
+        self.digits_option = digits_option
+        self.symbols_option = symbols_option
+        self.error_label = error_label
+
+    def _update_length(self, event):
+        self.length_label.value = f"Длина пароля: {int(event.control.value)}"
+        self.update()
+
+    def _generate_password(self, event=None):
+        self._generator.length = int(self.length_input.value)
+        self._generator.digits = bool(self.digits_option.value)
+        self._generator.symbols = bool(self.symbols_option.value)
+        self.password_input.value = self._generator.generate()
+        self.update()
+
+    def _save(self, event=None):
+        site = (self.site_input.value or "").strip()
+        password = self.password_input.value or ""
+        if not site or not password:
+            self.error_label.value = "Укажите сервис и пароль."
+            self.update()
+            return
+        entry = Entry(
+            site,
+            self.login_input.value or "",
+            password,
+            self.note_input.value or "",
+        )
+        self._page.pop_dialog()
+        self._on_save(entry)
+
+    def _cancel(self, event=None):
+        self._page.pop_dialog()
