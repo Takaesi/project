@@ -1,0 +1,4 @@
+vault.bin
+vault.bin.tmp
+venv/
+__pycache__/
